@@ -1,0 +1,180 @@
+
+KEY VAULT LOCAL
+
+Unseal Key 1: 3pn3aMTFJmGWQhhlPjkhuvmBVeRZwvovbKTSn8fXW+ZF
+Unseal Key 2: 4j9sqB1+4g5notlyStMcN4mGUDFCwqC3tPYi9DCQlUN6
+Unseal Key 3: PqscZnZLXN89EPCHlv3rIHbeB77IHaHclc8GEE00m5bs
+Unseal Key 4: AThWPnf0LgoojaujkJ0IlfYYj56U+NoLEr1c1FZJIef3
+Unseal Key 5: 3obErLTsb1ctHbgRShOfZsADShdZimOoKZIBa2aVYrzK
+
+Initial Root Token: 6OMVOtjKHRMjwbqmGPJvuo8b
+
+
+curl -H "X-Vault-Token: 6OMVOtjKHRMjwbqmGPJvuo8b" -X GET http://192.168.6.134:8200/v1/secret/secreto1
+
+curl -H "X-Vault-Token: f3b09679-3001-009d-2b80-9c306ab81aa6" -H "Content-Type: application/json" -X POST -d '{"value":"bar"}' http://192.168.6.134:8200/v1/secret/baz
+
+Unseal Key 1: 8/Ljpj35qQDtskvd1nq4ITNxv4zddiVYVizV9Hxek/tM
+Unseal Key 2: q+TzhP44bt0rR7YQcxUsI2qRG4ec4Vwrvuzj4pYaxtmI
+Unseal Key 3: Zh9jj7yXwle2WJUOjwgaylvMNNb8SL3kUWVVrXI7JBCi
+Unseal Key 4: zNLdWa4y0C/QpRZQvPaR5dVuVjEYKXwK9BCShN2E8k8B
+Unseal Key 5: S0dAfAWTX5iS+tfQMYi9RQ8Hturofs9RL7oungYvNe2D
+
+Initial Root Token: 2oiU8rfQVTDb8L2ih4gw3sDi
+
+--------------------------------------------------------------------------------------------------
+
+Proceso de configuracion
+=========================
+
+Binario: mv vault /usr/local/sbin
+
+Configuration File: /etc/vault/vault-server.hcl
+
+Server 1:
+
+cluster_name = "ironvault"
+disable_mlock = 0
+disable_cache = 0
+cache_size = "32000"
+default_lease_ttl = "3h"
+max_lease_ttl = "3h"
+
+storage "file" {
+  path = "/var/lib/vault/secrets"
+}
+
+listener "tcp" {
+  address = ":8200"
+  cluster_address = ":8201"
+  tls_disable = 0
+  tls_cert_file = "/etc/vault/ssl/vault.crt"
+  tls_key_file = "/etc/vault/ssl/vault.key"
+  tls_min_version = "tls12"
+  tls_prefer_server_cipher_suites = 0
+}
+
+
+Definicion de Servicio
+----------------------
+
+Service File: /lib/systemd/system/vault-server.service
+
+[Unit]
+Description=HashiCorp's Vault Secrets Store
+After=network.target
+ 
+[Service]
+Type=simple
+PIDFile=/var/run/vault-server.pid
+ExecStart=/usr/local/sbin/vault server -config=/etc/vault/vault-server.hcl
+ 
+[Install]
+WantedBy=multi-user.target
+
+
+
+
+
+
+Proceso de Iniciacion
+=======================
+
+Unseal Key 1: i+a/aSno1OU8hZNlA0AVTlbK2JXTVO3X7liUQ2209TX9
+Unseal Key 2: Bt1C0LXYb4Dwa3e+AWCtdWjstqzuo0/kFPp70+8N+fRq
+Unseal Key 3: 5GM85bDGpIHnbLKI8WzCQeBW1DlXh1srohMQ+32Dh/PR
+Unseal Key 4: 1VurCVkBfmUzyzTd+6UAtOo9tMosuIxwMexVAq5w+tne
+Unseal Key 5: k/hWY4l4tOi7vYQCPub56/u6E7ip0JiX3r5aZAWzs3YJ
+
+Initial Root Token: 4e7a64a5-c534-9c98-0536-15d16ff217a6
+
+Creamos las bobedas por cada tipo de negocio
+
+Proceso de creacion de Boveda kv
+=================================
+Creamos las bobeda para almacenar los password cifrados
+vault secrets list | grep kv
+vault secrets enable -version=1 -path=tributario/kv kv
+
+Proceso de creacion de Boveda Transito
+=======================================
+Creamos las bobeda para almacenar la clave privada
+vault secrets list | grep transit
+vault secrets enable -path=tributario/trt transit
+
+En caso se desee borrar
+vault secrets disable tributario/
+
+
+Proceso de Autorizacion
+=================================
+Para listar las politicas
+vault policy list
+Creamos el directorio para las politicas
+mkdir -p /etc/vault/policies/tributario/contribuyente/cdt
+
+Creamos el archivo
+
+vi contribuyente-cdt-registro.hcl
+path "tributario/kv/contribuyente/cdt/*" {
+  capabilities = ["create", "read", "list", "update", "delete"]
+}
+
+vi contribuyente-cdt-consulta.hcl
+path "tributario/kv/contribuyente/cdt/*" {
+  capabilities = ["read", "list"]
+}
+path "tributario/trt/contribuyente/cdt/*" {
+  capabilities = ["read", "list"]
+}
+
+Para darle formato al archivo hcl de la politica
+vault policy fmt contribuyente-cdt-registro.hcl
+vault policy fmt contribuyente-cdt-consulta.hcl
+Para escribir la politica
+vault policy write contribuyente-cdt-registro contribuyente-cdt-registro.hcl
+vault policy write contribuyente-cdt-consulta contribuyente-cdt-consulta.hcl
+En caso se desee borrar
+vault policy delete contribuyente-cdt-registro
+vault policy delete contribuyente-cdt-consulta
+Para leer la politica
+vault policy read contribuyente-cdt-registro
+vault policy read contribuyente-cdt-consulta
+
+Ejemplo de creacion de un token con una politica asociada
+vault token create -policy=my-policy
+
+Proceso de Autenticacion
+=================================
+Activamos la autenticacion appRole
+vault auth list
+vault auth enable approle
+
+tributariocontribuyentecdt
+tecnologiaseguridadcrypto
+
+Proceso de Operaciones x Consola
+=================================
+Para listar los secret por consola
+vault list secret
+Para leer un secret especifico
+vault read secret/secreto1
+Para crear un secret
+vault kv put secret/sunat/test foo=world
+
+Proceso de Generacion de Clave Privada cdt
+==========================================
+
+Ubicacion: /etc/vault/engine/tributario/trt/contribuyente/cdt/keys
+
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -outform DER -pubout -out public.key
+openssl pkcs8 -topk8 -nocrypt -in private.pem -outform DER -out private.key
+
+echo -n 'v1' | base64
+base64 private.key
+
+contribuyentecdtpk
+
+
+
