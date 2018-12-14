@@ -60,9 +60,9 @@ Server 1:
   "data_dir": "/etc/consul/data/server",
   "bind_addr": "0.0.0.0",
   "client_addr": "0.0.0.0",
-  "advertise_addr": "192.168.6.135",
+  "advertise_addr": "172.31.37.149",
   "bootstrap_expect": 2,
-  "retry_join": ["192.168.6.135", "192.168.6.134"],
+  "retry_join": ["172.31.37.149", "172.31.38.50"],
   "ui": true,
   "log_level": "DEBUG",
   "enable_syslog": true,
@@ -78,9 +78,9 @@ Server_2:
   "data_dir": "/etc/consul/data/server",
   "bind_addr": "0.0.0.0",
   "client_addr": "0.0.0.0",
-  "advertise_addr": "192.168.6.134",
+  "advertise_addr": "172.31.38.50",
   "bootstrap_expect": 2,
-  "retry_join": ["192.168.6.135", "192.168.6.134"],
+  "retry_join": ["172.31.37.149", "172.31.38.50"],
   "ui": true,
   "log_level": "DEBUG",
   "enable_syslog": true,
@@ -156,20 +156,12 @@ Server 1:
   "datacenter": "dc_sanisidro",
   "node_name": "consul_c1",
   "data_dir": "/etc/consul/data/client",
-  "bind_addr": "192.168.6.135",
+  "bind_addr": "172.31.32.47",
   "client_addr": "127.0.0.1",
-  "retry_join": ["192.168.6.135", "192.168.6.134"],
+  "retry_join": ["172.31.37.149", "172.31.38.50"],
   "log_level": "DEBUG",
   "enable_syslog": true,
-  "acl_enforce_version_8": false,
-  "ports": {
-    "dns": 8610,
-    "http": 8510,
-    "https": 8511,
-    "grpc": 8512,
-    "serf_lan": 8311,
-    "serf_wan": 8312
-  }
+  "acl_enforce_version_8": false
 }
 
 Server_2:
@@ -179,20 +171,12 @@ Server_2:
   "datacenter": "dc_sanisidro",
   "node_name": "consul_c2",
   "data_dir": "/etc/consul/data/client",
-  "bind_addr": "192.168.6.134",
+  "bind_addr": "172.31.39.182",
   "client_addr": "127.0.0.1",
-  "retry_join": ["192.168.6.135", "192.168.6.134"],
+  "retry_join": ["172.31.37.149", "172.31.38.50"],
   "log_level": "DEBUG",
   "enable_syslog": true,
-  "acl_enforce_version_8": false,
-  "ports": {
-    "dns": 8610,
-    "http": 8510,
-    "https": 8511,
-    "grpc": 8512,
-    "serf_lan": 8311,
-    "serf_wan": 8312
-  }
+  "acl_enforce_version_8": false
 }
 
 Definicion de Servicio
@@ -242,4 +226,6 @@ systemctl stop consul-client
 systemctl status consul-client
 ps -ef|grep consul-client
 
+verificamos el estado del grupo de Cónsul:
+consul members
 
