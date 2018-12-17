@@ -23,6 +23,8 @@ Unseal Key 5: S0dAfAWTX5iS+tfQMYi9RQ8Hturofs9RL7oungYvNe2D
 Initial Root Token: 2oiU8rfQVTDb8L2ih4gw3sDi
 
 --------------------------------------------------------------------------------------------------
+https://blog.irontec.com/guardando-nuestros-secretos-en-vault-1-de-2/
+https://blog.irontec.com/guardando-nuestros-secretos-en-vault-2-de-2/
 
 Proceso de configuracion
 =========================
