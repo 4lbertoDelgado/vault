@@ -229,3 +229,135 @@ ps -ef|grep consul-client
 verificamos el estado del grupo de Cónsul:
 consul members
 
+
+Proceso de configuracion servidores vault
+==========================================
+
+Cifrando la comunicación con Vault
+-----------------------------------
+
+Binario: mv vault /usr/local/sbin
+
+mkdir /etc/vault/ssl ; cd /etc/vault/ssl
+
+Generamos le CRT de la CA
+openssl genrsa -out vaultca.key 4096
+openssl req -x509 -new -nodes -key vaultca.key -sha256 -days 9999 -out vaultca.crt
+
+Generamos el CSR del SERVER
+openssl req -out vault.csr -newkey rsa:4096 -nodes -keyout vault.key
+
+Generamos el CRT del SERVER con los datos de la CA
+openssl x509 -req -in vault.csr -CA vaultca.crt -CAkey vaultca.key -CAcreateserial -out vault.crt -days 9998
+
+Configuracion de vault
+------------------------
+
+Configuration File: /etc/vault/vault_server.hcl
+
+Server 1:
+
+cluster_name = "ironvault"
+disable_mlock = 0
+disable_cache = 0
+cache_size = "32000"
+default_lease_ttl = "3h"
+max_lease_ttl = "3h"
+
+listener "tcp" {
+  address          = "0.0.0.0:8200"
+  cluster_address  = "172.31.32.47:8201"
+  tls_disable = 0
+  tls_cert_file = "/etc/vault/ssl/vault.crt"
+  tls_key_file = "/etc/vault/ssl/vault.key"
+  tls_min_version = "tls12"
+  tls_prefer_server_cipher_suites = 0
+}
+
+storage "consul" {
+  address = "127.0.0.1:8500"
+  path    = "/etc/vault/data/"
+}
+
+api_addr = "http://172.31.32.47:8200"
+cluster_addr = "https://172.31.32.47:8201"
+
+Server 2:
+
+cluster_name = "ironvault"
+disable_mlock = 0
+disable_cache = 0
+cache_size = "32000"
+default_lease_ttl = "3h"
+max_lease_ttl = "3h"
+
+listener "tcp" {
+  address          = "0.0.0.0:8200"
+  cluster_address  = "172.31.39.182:8201"
+  tls_disable = 0
+  tls_cert_file = "/etc/vault/ssl/vault.crt"
+  tls_key_file = "/etc/vault/ssl/vault.key"
+  tls_min_version = "tls12"
+  tls_prefer_server_cipher_suites = 0
+}
+
+storage "consul" {
+  address = "127.0.0.1:8500"
+  path    = "/etc/vault/data/"
+}
+
+api_addr = "http://172.31.39.182:8200"
+cluster_addr = "https://172.31.39.182:8201"
+
+Definicion de Servicio
+----------------------
+
+Service File: /etc/systemd/system/vault-server.service
+
+### BEGIN INIT INFO
+# Provides:          vault
+# Required-Start:    $local_fs $remote_fs
+# Required-Stop:     $local_fs $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Vault server
+# Description:       Vault secret management tool
+### END INIT INFO
+
+[Unit]
+Description=Vault secret management tool
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+User=root
+Group=root
+PIDFile=/var/run/vault/vault-server.pid
+ExecStart=/usr/local/sbin/vault server -config=/etc/vault/vault_server.hcl -log-level=debug
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=42s
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+
+Proceso de Inicio y Verificacion de estado de consul
+====================================================
+
+systemctl daemon-reload
+systemctl start vault-server
+systemctl status vault-server
+
+systemctl stop vault-server
+systemctl status vault-server
+ps -ef|grep vault-server
+
+Proceso de Iniciacion
+=======================
+
+vault operator init
+vault operator unseal
+vault status
