@@ -43,6 +43,7 @@ Para la API de HTTP
 CONSUL HA
 
 https://learn.hashicorp.com/vault/operations/ops-vault-ha-consul
+https://learn.hashicorp.com/consul/getting-started/join
 
 Proceso de configuracion de un grupo de servidores de cónsul
 ============================================================
@@ -130,6 +131,7 @@ Proceso de Inicio y Verificacion de estado de consul
 systemctl daemon-reload
 systemctl start consul-server
 systemctl status consul-server
+ps -ef|grep consul-server
 
 systemctl stop consul-server
 systemctl status consul-server
@@ -221,6 +223,7 @@ WantedBy=multi-user.target
 systemctl daemon-reload
 systemctl start consul-client
 systemctl status consul-client
+ps -ef|grep consul-client
 
 systemctl stop consul-client
 systemctl status consul-client
@@ -240,6 +243,9 @@ Binario: mv vault /usr/local/sbin
 
 mkdir /etc/vault/ssl ; cd /etc/vault/ssl
 
+Generacion de certificados para un dominio. Configuracion regular
+***********************************************************************
+
 Generamos le CRT de la CA
 openssl genrsa -out vaultca.key 4096
 openssl req -x509 -new -nodes -key vaultca.key -sha256 -days 9999 -out vaultca.crt
@@ -249,6 +255,50 @@ openssl req -out vault.csr -newkey rsa:4096 -nodes -keyout vault.key
 
 Generamos el CRT del SERVER con los datos de la CA
 openssl x509 -req -in vault.csr -CA vaultca.crt -CAkey vaultca.key -CAcreateserial -out vault.crt -days 9998
+
+
+Generacion de certificados para varios dominios. Configuracion con SAN
+***********************************************************************
+
+Creamos el archivo: /etc/vault/openssl.cnf
+
+[ req ]
+default_bits = 4096
+distinguished_name = req_distinguished_name
+req_extensions = req_ext
+
+[ req_distinguished_name ]
+countryName = Country Name (2 letter code)
+stateOrProvinceName = State or Province Name (full name)
+localityName = Locality Name (eg, city)
+organizationName = Organization Name (eg, company)
+commonName = Common Name (e.g. server FQDN or YOUR name)
+
+[ req_ext ]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = *.compute.amazonaws.com
+DNS.2 = *.compute.internal
+DNS.3 = localhost
+IP.1 = 3.17.4.216
+IP.2 = 172.31.32.47
+IP.3 = 127.0.0.1
+
+En el apartado “[alt_names]” hemos puesto los DNS y las IPs con las que accederemos al servicio.
+
+Generamos le CRT de la CA
+openssl genrsa -out vaultca.key 4096
+openssl req -x509 -new -nodes -key vaultca.key -sha256 -days 9999 -out vaultca.crt
+
+Generamos el CSR del SERVER
+openssl req -out vault.csr -newkey rsa:4096 -nodes -keyout vault.key -config /etc/vault/openssl.cnf
+
+Generamos el CRT del SERVER con los datos de la CA
+openssl x509 -req -in vault.csr -CA vaultca.crt -CAkey vaultca.key -CAcreateserial -out vault.crt -days 9998 -extfile /etc/vault/openssl.cnf -extensions req_ext
+
+Y podemos ver cómo se han añadido al certificado los SubjectAlternativeNames:
+openssl x509 -in vault.crt -text -noout | grep DNS
 
 Configuracion de vault
 ------------------------
@@ -350,6 +400,7 @@ Proceso de Inicio y Verificacion de estado de consul
 systemctl daemon-reload
 systemctl start vault-server
 systemctl status vault-server
+ps -ef|grep vault-server
 
 systemctl stop vault-server
 systemctl status vault-server
@@ -358,6 +409,119 @@ ps -ef|grep vault-server
 Proceso de Iniciacion
 =======================
 
-vault operator init
-vault operator unseal
-vault status
+Parametro -tls-skip-verify para no verificar el CA
+
+vault operator init -tls-skip-verify
+vault operator unseal -tls-skip-verify
+vault status -tls-skip-verify
+
+Server 1: vault_s1
+
+{
+    "keys": [
+        "ebb09cccebd3c167ae207290f7b7d28b16ddfc04b209a55b467ef8283989e8430e",
+        "90b67eb52dcd123498ec900eb6071228895f19654a9b2c1f06f4587fc98d4bdb6a",
+        "ced4ade54636b91a255533b78bfd2644d1b4dc6baa0b015512276440daf2f2ae5a",
+        "ce8c096e7476f17e336f4934b6f59f431c35ab17c95f25c951bcebe90e44fd42b4",
+        "de9a75b598e471b35e3f65a44eac23297996aa07439a7410a11e1770ab3fc6a145"
+    ],
+    "keys_base64": [
+        "67CczOvTwWeuIHKQ97fSixbd/ASyCaVbRn74KDmJ6EMO",
+        "kLZ+tS3NEjSY7JAOtgcSKIlfGWVKmywfBvRYf8mNS9tq",
+        "ztSt5UY2uRolVTO3i/0mRNG03GuqCwFVEidkQNry8q5a",
+        "zowJbnR28X4zb0k0tvWfQxw1qxfJXyXJUbzr6Q5E/UK0",
+        "3pp1tZjkcbNeP2WkTqwjKXmWqgdDmnQQoR4XcKs/xqFF"
+    ],
+    "root_token": "4zDnMhsVLWlik6a447MZYYAt"
+}
+
+Server 2: vault_s2
+
+Proceso de Configuracion de motor de secretos kv en Vault
+=========================================================
+
+vault login -tls-skip-verify 4zDnMhsVLWlik6a447MZYYAt
+
+Proceso de creacion de Boveda kv
+=================================
+Creamos las bobeda para almacenar los password cifrados
+vault secrets list -tls-skip-verify | grep kv
+vault secrets enable -tls-skip-verify -version=1 -path=tributario/kv kv
+
+Proceso de Autorizacion
+=================================
+Para listar las politicas
+vault policy list
+Creamos el directorio para las politicas
+mkdir -p /etc/vault/policies/tributario/contribuyente/cdt
+
+Creamos el archivo
+
+vi contribuyente-cdt-registro.hcl
+path "tributario/kv/contribuyente/cdt/*" {
+  capabilities = ["create", "read", "list", "update", "delete"]
+}
+
+vi contribuyente-cdt-consulta.hcl
+path "tributario/kv/contribuyente/cdt/*" {
+  capabilities = ["read", "list"]
+}
+path "tributario/trt/contribuyente/cdt/*" {
+  capabilities = ["read", "list"]
+}
+
+Para darle formato al archivo hcl de la politica
+vault policy fmt contribuyente-cdt-registro.hcl
+vault policy fmt contribuyente-cdt-consulta.hcl
+Para escribir la politica
+vault policy write contribuyente-cdt-registro contribuyente-cdt-registro.hcl
+vault policy write contribuyente-cdt-consulta contribuyente-cdt-consulta.hcl
+En caso se desee borrar
+vault policy delete contribuyente-cdt-registro
+vault policy delete contribuyente-cdt-consulta
+Para leer la politica
+vault policy read contribuyente-cdt-registro
+vault policy read contribuyente-cdt-consulta
+
+Ejemplo de creacion de un token con una politica asociada
+vault token create -policy=my-policy
+
+Proceso de Autenticacion
+=================================
+Activamos la autenticacion appRole
+vault auth list
+vault auth enable approle
+
+tributariocontribuyentecdt
+tecnologiaseguridadcrypto
+
+Proceso de Operaciones x Consola
+=================================
+Para listar los secret por consola
+vault list secret
+Para leer un secret especifico
+vault read secret/secreto1
+Para crear un secret
+vault kv put secret/sunat/test foo=world
+
+Proceso de Generacion de Clave Privada cdt
+==========================================
+
+Ubicacion: /etc/vault/engine/tributario/trt/contribuyente/cdt/keys
+
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -outform DER -pubout -out public.key
+openssl pkcs8 -topk8 -nocrypt -in private.pem -outform DER -out private.key
+
+echo -n 'v1' | base64
+base64 private.key
+
+contribuyentecdtpk
+
+
+
+
+
+
+
+
