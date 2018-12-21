@@ -1,0 +1,340 @@
+Proceso de configuracion servidores vault_s1
+============================================
+
+Copiar binario del vault a /usr/local/sbin
+mv vault /usr/local/sbin
+chmod 755 vault
+
+Cifrando la comunicación con Vault
+-----------------------------------
+Crear directorio ssl
+mkdir -p /etc/vault/ssl ; cd /etc/vault/ssl
+
+Generacion de certificados para un dominio. Configuracion regular
+***********************************************************************
+
+Generamos le CRT de la CA
+openssl genrsa -out vaultca.key 4096
+openssl req -x509 -new -nodes -key vaultca.key -sha256 -days 9999 -out vaultca.crt
+
+Generamos el CSR del SERVER
+openssl req -out vault.csr -newkey rsa:4096 -nodes -keyout vault.key
+
+Generamos el CRT del SERVER con los datos de la CA
+openssl x509 -req -in vault.csr -CA vaultca.crt -CAkey vaultca.key -CAcreateserial -out vault.crt -days 9998
+
+
+Generacion de certificados para varios dominios. Configuracion con SAN
+***********************************************************************
+
+Creamos el archivo: /etc/vault/openssl.cnf
+
+[ req ]
+default_bits = 4096
+distinguished_name = req_distinguished_name
+req_extensions = req_ext
+
+[ req_distinguished_name ]
+countryName = Country Name (2 letter code)
+stateOrProvinceName = State or Province Name (full name)
+localityName = Locality Name (eg, city)
+organizationName = Organization Name (eg, company)
+commonName = Common Name (e.g. server FQDN or YOUR name)
+
+[ req_ext ]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = *.compute.amazonaws.com
+DNS.2 = *.compute.internal
+DNS.3 = localhost
+IP.1 = 3.17.4.216
+IP.2 = 172.31.32.47
+IP.3 = 127.0.0.1
+
+En el apartado “[alt_names]” hemos puesto los DNS y las IPs con las que accederemos al servicio.
+
+Generamos le CRT de la CA
+openssl genrsa -out vaultca.key 4096
+openssl req -x509 -new -nodes -key vaultca.key -sha256 -days 9999 -out vaultca.crt
+
+Generamos el CSR del SERVER
+openssl req -out vault.csr -newkey rsa:4096 -nodes -keyout vault.key -config /etc/vault/openssl.cnf
+
+Generamos el CRT del SERVER con los datos de la CA
+openssl x509 -req -in vault.csr -CA vaultca.crt -CAkey vaultca.key -CAcreateserial -out vault.crt -days 9998 -extfile /etc/vault/openssl.cnf -extensions req_ext
+
+Y podemos ver cómo se han añadido al certificado los SubjectAlternativeNames:
+openssl x509 -in vault.crt -text -noout | grep DNS
+
+Generacion de certificados para ya generados.
+**********************************************
+
+Copiamos los certificados ya generados al directorio /etc/vault/ssl
+mv cert.cert.pem /etc/vault/ssl
+mv cert.key.pem /etc/vault/ssl
+
+Configuracion de vault
+------------------------
+Creamos el archivo de configuracion
+mkdir -p /etc/vault/config
+Configuration File: /etc/vault/config/vault_server.hcl
+
+Server 1:
+
+cluster_name = "ironvault"
+disable_mlock = 0
+disable_cache = 0
+cache_size = "32000"
+default_lease_ttl = "3h"
+max_lease_ttl = "3h"
+
+storage "file" {
+  path = "/etc/vault/data"
+}
+
+ui = true
+
+listener "tcp" {
+  address = ":8200"
+  cluster_address = ":8201"
+  tls_disable = 0
+  tls_cert_file = "/etc/vault/ssl/cert.cert.pem"
+  tls_key_file = "/etc/vault/ssl/cert.key.pem"
+  tls_min_version = "tls12"
+  tls_prefer_server_cipher_suites = 0
+}
+
+Definicion de Servicio
+----------------------
+Creamos el archivo de servicio 
+Service File: /etc/systemd/system/vault-server.service
+
+### BEGIN INIT INFO
+# Provides:          vault
+# Required-Start:    $local_fs $remote_fs
+# Required-Stop:     $local_fs $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Vault server
+# Description:       Vault secret management tool
+### END INIT INFO
+
+[Unit]
+Description=Vault secret management tool
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+User=root
+Group=root
+PIDFile=/var/run/vault/vault-server.pid
+ExecStart=/usr/local/sbin/vault server -config=/etc/vault/config/vault_server.hcl -log-level=debug 
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=42s
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+
+Proceso de Inicio y Verificacion de estado de vault
+====================================================
+
+systemctl daemon-reload
+systemctl start vault-server
+systemctl status vault-server
+ps -ef|grep vault
+
+systemctl stop vault-server
+systemctl status vault-server
+ps -ef|grep vault
+
+Proceso de Iniciacion
+=======================
+
+Parametro -tls-skip-verify para no verificar el CA
+
+Inicializacion de vault
+vault operator init -tls-skip-verify
+
+Server 1: Calidad/vault_s1
+
+Unseal Key 1: fuIVGrpTbDR/BzpXanQbmCQET+3kZBSj+CTtBPCtFaAs
+Unseal Key 2: vBu1C9+Ra53/kWhIzGP1yRJtQX5EbA9PnTlXV7yVjiC1
+Unseal Key 3: SfgbTYgr4YCeI0mmGDV913cT9L6Rii8YnECB5ganxLaH
+Unseal Key 4: HmInanK0vg0gqKYmN3teA1gjoZ+K0ezDOfjpSoZ5HpS8
+Unseal Key 5: 9NsdRpZQ6iykSTjlB5ezZGr/rxSlL5co0VINYWctvkRd
+
+Initial Root Token: 2pplSAEsQKrhY2zbbp7zxHkh
+
+Desellado de vault
+vault unseal -tls-skip-verify fuIVGrpTbDR/BzpXanQbmCQET+3kZBSj+CTtBPCtFaAs
+vault unseal -tls-skip-verify vBu1C9+Ra53/kWhIzGP1yRJtQX5EbA9PnTlXV7yVjiC1
+vault unseal -tls-skip-verify SfgbTYgr4YCeI0mmGDV913cT9L6Rii8YnECB5ganxLaH
+
+Validamos el estado de vault
+vault status -tls-skip-verify | grep Sealed
+
+Proceso de Configuracion de motor de secretos kv en Vault
+=========================================================
+
+Login root vault
+vault login -tls-skip-verify 2pplSAEsQKrhY2zbbp7zxHkh
+
+Proceso de creacion de Boveda kv
+=================================
+Creamos las bobeda de almacen para cada tipo de negocio
+vault secrets list -tls-skip-verify | grep kv
+vault secrets enable -tls-skip-verify -version=1 -path=tributario/kv kv
+
+Proceso de Autorizacion
+=================================
+Para listar las politicas
+vault policy list -tls-skip-verify
+Creamos el directorio para las politicas
+mkdir -p /etc/vault/policies/tributario/kv/contribuyente/registro/cdt
+
+Creamos el archivo de politicas
+vi contribuyente-registro-cdt-registro.hcl
+
+path "tributario/kv/contribuyente/registro/cdt/keys/7635902230472781" {
+  capabilities = ["create", "read", "list"]
+}
+
+Para darle formato al archivo hcl de la politica
+vault policy fmt contribuyente-registro-cdt-registro.hcl
+Para escribir la politica
+vault policy write -tls-skip-verify contribuyente-registro-cdt contribuyente-registro-cdt-registro.hcl
+En caso se desee borrar
+vault policy delete -tls-skip-verify contribuyente-registro-cdt
+Para leer la politica
+vault policy read -tls-skip-verify contribuyente-registro-cdt
+
+Ejemplo de creacion de un token con una politica asociada
+vault token create -policy=my-policy
+
+Proceso de Autenticacion
+=================================
+
+Listamos todos los metodos de autentificacion activados
+vault auth list -tls-skip-verify
+Activamos la autenticacion appRole
+vault auth enable -tls-skip-verify approle 
+
+Listar approle
+curl -X LIST \
+  https://192.168.66.193:8200/v1/auth/approle/role -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Postman-Token: 963b1924-c920-4338-8251-1321bcb056ed' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Crear approle
+curl -X POST \
+  https://192.168.66.193:8200/v1/auth/approle/role/contribuyente-registro-cdt -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 823037d0-88b9-4427-88ac-e3dfea8600f3' \
+  -H 'cache-control: no-cache' \ 
+  -d '{
+  "token_ttl": "60m",
+  "token_max_ttl": "120m",
+  "policies": [
+    "contribuyente-registro-cdt"
+  ],
+  "period": 0,
+  "bind_secret_id": true
+}' | python -mjson.tool
+
+Leemos la approle
+curl -X GET \
+  https://192.168.66.193:8200/v1/auth/approle/role/contribuyente-registro-cdt -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Postman-Token: 5dbf7692-30a9-45bb-a2b6-ed59e3aefd43' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Obtenemos Roleid
+curl -X GET \
+  https://192.168.66.193:8200/v1/auth/approle/role/contribuyente-registro-cdt/role-id -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Postman-Token: 9ad87f6c-29b5-4909-8e6f-b744a114671a' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Creamos Secretid
+curl -X POST \
+  https://192.168.66.193:8200/v1/auth/approle/role/contribuyente-registro-cdt/secret-id -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Postman-Token: 94eee43a-8af1-47c6-9490-318b868ecfae' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Login approle
+curl -X POST \
+  https://192.168.66.193:8200/v1/auth/approle/login -k \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 22e259e3-59dc-44de-930d-ef23891a882b' \
+  -H 'cache-control: no-cache' \
+  -d '{
+    "role_id": "477a8aca-0495-585f-b6d0-e5c33e6b4ce5",
+    "secret_id": "d1272818-8511-05a0-3aad-50e3c0085738"
+}' | python -mjson.tool
+
+Proceso de Generacion de Clave Privada cdt
+==========================================
+
+Creamos el directorio de la clave privada
+Ubicacion:
+mkdir -p /etc/vault/engine/tributario/kv/contribuyente/registro/cdt/keys/v1
+
+Generamos las claves publicas y privadas
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -pubout -out public.pem
+openssl rsa -in private.pem -outform DER -pubout -out public.key
+openssl pkcs8 -topk8 -nocrypt -in private.pem -outform DER -out private.key
+
+Convertimos la clave privada en base64
+echo -n 'v1' | base64
+base64 private.key
+
+Generacion de numero Aleatorio
+keys]# cat /dev/urandom| tr -dc '0-9' | fold -w 16| head -1
+
+7635902230472781
+
+Proceso de Operaciones x Consola
+=================================
+Para listar los secret por consola
+vault list secret
+Para leer un secret especifico
+vault read secret/secreto1
+Para crear un secret
+vault kv put secret/sunat/test foo=world
+
+---------------------------------------------
+ 
+vault list -tls-skip-verify tributatio/kv
+
+Creamos secret kv
+curl -X POST \
+  https://192.168.66.193:8200/v1/tributario/kv/contribuyente/registro/cdt/keys/7635902230472781 -k \
+  -H 'Authorization: Bearer 2pplSAEsQKrhY2zbbp7zxHkh' \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 505c1030-25d9-4c81-a755-054b9abc0bd3' \
+  -H 'cache-control: no-cache' \
+  -d '{
+    "private_key": {
+        "password": {
+            "v1": "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDDqyEvZE+kg/NV3XF4eC0qa3njU2UsqTykHfu4QGtWc6JbPF/rCyhVi/swZotp18CirfWGwyOqDhakvaWF0jWmTO1OulqNweyAOPoZytdRqXsb4QOCssV0ovLNfPpWD93tkfqahIC9TOze7b3pT7X2+kHw4zQ0bj+b00FkpudXuKAoXVqfmHTIBVMbBgR5AgZTkBdsWvrdky6DnaBLJbr7NiNbpPbcpSsR1eSE/jjeuvHSWrNnLrUYoYl6uN8Cnve1bj/TQ6n2byZC5NaUAsusaepDoooldVJc0pNgwDmPT0beSf9JP414j96G5VfxBYl3T+K9yisF30fLwY3IutaPAgMBAAECggEBAKi7cyOOKkvhab669nX/lFtHUVXifZX03xFbtc1e5/EmSHTK7KAhAAg9bUCAvWppnnnq75blwmSMP6SS0iFDc/ZT0jSY6SvjdhHgkHQbgnCuaTZSZReZGEOLnTvssWfzyNpsjyIeb3JO2tknRSTkEzPG/YRAOa2ZAQtcMsEcWNVAISIUKR8219VIVRN4W/5Mu9OY03jL9b1ukD7gb6X9zsyDw7MuEUxkTZJ7PofZlTGXH6XWD1mbFNbTKiC1tCMBtMe9f7iw5kuRX64KBK/iYhBgqJluDEBGS1p3bVJEmWIJ8Myaqgsrn58zgNpSAn8xSNbuAeOiZXqwSfbaDYsOrFECgYEA/Nz4wPilLBUtf3QhVc294AeC21iHbrikb1lpARwhGfEOhPeONNsslNM37Ns78RcY71byaBD6juD1dNs2Xwn2eiwekVKoLrI1qkIFC/pmewgPkEA5xWD036c4CEw0cD1m6kyG5+SMMw9qty0rrr+PRQcEbISXoOf5mp0dgoV/uKkCgYEAxhiFtkBdYUtw9WUkRg406lgUbqLMLNFoIxJNq0fe8Tu3isp4yfnfNFkhcaiSU/pK2MWpJWtmrUcM/Z3wToe6JyWnsEAAPeZKzPLUJ9mwPLd0y+jTXC/zMYJKm30MV8dCS+EV18Ow/6YEAATwBy416ak8FFv+a2HEjUYa3NT8AHcCgYBYs/OXTiIzGqLBSS3AedIX2squw5mO37rfTNAnEYUTIprjTixWomQ7OPUvY6DdbCrVGv0iQIKEyKmSeqvSHx6VsRBwDjztVJq6xTob/5Ufp649/inF8cM1CeYAEyt6DDAkFQBmLKh56PiYlYHzZUOPBW0p3EGMspO/B0qo1Mf/MQKBgEKOTKZ+G6Gr2ijosXZEIa02qK6/TcAlH0rhRG0uuY3tVW5xNoINzNtmsuDgFUHXzzvjtT/YROgk/g1b+jg4S+gJM7z409v4Ott/Hp7A+gB8VuaHtDO9/IR+1RhGvFXlobWiy1bx7c8G9UMYZZjUAtMdxAzHF8T2VTZt/mqBuKVjAoGBANjmnKnMzqxJ9SjtveWr7LXH9fAX8scbgE7Y5+NbUZz92H9zN8AYoFVSVPxVjUXuFYGHQR/3/y7ISNmg9rD/7ImgNuH+5TeLeEPecd6zPpoDcd1uhppk96PggdW10B67UDDz9mTZL/20Rl77kd+cuxXIbZctHqqH71cPu4Ywq1Jt"
+        }
+    }
+}' | python -mjson.tool
+
+Leemos secret kv
+curl -X GET \
+  https://192.168.66.193:8200/v1/tributario/kv/contribuyente/registro/cdt/keys/7635902230472781 -k \
+  -H 'Authorization: Bearer 2cnPvLpxXyrh99ZfGl9RRwQB' \
+  -H 'Postman-Token: 34a012d2-f732-4a32-9247-96560c07cab3' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+2cnPvLpxXyrh99ZfGl9RRwQB
