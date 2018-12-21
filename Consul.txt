@@ -303,7 +303,7 @@ openssl x509 -in vault.crt -text -noout | grep DNS
 Configuracion de vault
 ------------------------
 
-Configuration File: /etc/vault/vault_server.hcl
+Configuration File: /etc/vault/config/vault_server.hcl
 
 Server 1:
 
@@ -383,7 +383,7 @@ After=network-online.target
 User=root
 Group=root
 PIDFile=/var/run/vault/vault-server.pid
-ExecStart=/usr/local/sbin/vault server -config=/etc/vault/vault_server.hcl -log-level=debug
+ExecStart=/usr/local/sbin/vault server -config=/etc/vault/config/vault_server.hcl -log-level=debug 
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=process
 KillSignal=SIGTERM
@@ -400,7 +400,7 @@ Proceso de Inicio y Verificacion de estado de consul
 systemctl daemon-reload
 systemctl start vault-server
 systemctl status vault-server
-ps -ef|grep vault-server
+ps -ef|grep vault
 
 systemctl stop vault-server
 systemctl status vault-server
@@ -411,11 +411,10 @@ Proceso de Iniciacion
 
 Parametro -tls-skip-verify para no verificar el CA
 
+Inicializacion de vault
 vault operator init -tls-skip-verify
-vault operator unseal -tls-skip-verify
-vault status -tls-skip-verify
 
-Server 1: vault_s1
+Server 1: AWS/vault_s1
 
 {
     "keys": [
@@ -435,65 +434,138 @@ Server 1: vault_s1
     "root_token": "4zDnMhsVLWlik6a447MZYYAt"
 }
 
-Server 2: vault_s2
+Desellado de vault
+vault unseal -tls-skip-verify 67CczOvTwWeuIHKQ97fSixbd/ASyCaVbRn74KDmJ6EMO
+vault unseal -tls-skip-verify kLZ+tS3NEjSY7JAOtgcSKIlfGWVKmywfBvRYf8mNS9tq
+vault unseal -tls-skip-verify ztSt5UY2uRolVTO3i/0mRNG03GuqCwFVEidkQNry8q5a
+
+Validamos el estado de vault
+vault status -tls-skip-verify | grep Sealed
 
 Proceso de Configuracion de motor de secretos kv en Vault
 =========================================================
 
+Login root vault
 vault login -tls-skip-verify 4zDnMhsVLWlik6a447MZYYAt
 
 Proceso de creacion de Boveda kv
 =================================
-Creamos las bobeda para almacenar los password cifrados
+Creamos las bobeda de almacen para cada tipo de negocio
 vault secrets list -tls-skip-verify | grep kv
 vault secrets enable -tls-skip-verify -version=1 -path=tributario/kv kv
 
 Proceso de Autorizacion
 =================================
 Para listar las politicas
-vault policy list
+vault policy list -tls-skip-verify
 Creamos el directorio para las politicas
-mkdir -p /etc/vault/policies/tributario/contribuyente/cdt
+mkdir -p /etc/vault/policies/tributario/kv/contribuyente/registro/cdt
 
-Creamos el archivo
+Creamos el archivo de politicas
+vi contribuyente-registro-cdt-registro.hcl
 
-vi contribuyente-cdt-registro.hcl
-path "tributario/kv/contribuyente/cdt/*" {
-  capabilities = ["create", "read", "list", "update", "delete"]
-}
-
-vi contribuyente-cdt-consulta.hcl
-path "tributario/kv/contribuyente/cdt/*" {
-  capabilities = ["read", "list"]
-}
-path "tributario/trt/contribuyente/cdt/*" {
-  capabilities = ["read", "list"]
+vi contribuyente-registro-cdt-registro.hcl
+path "tributario/kv/contribuyente/registro/cdt/keys/7635902230472781" {
+  capabilities = ["create", "read", "list"]
 }
 
 Para darle formato al archivo hcl de la politica
-vault policy fmt contribuyente-cdt-registro.hcl
-vault policy fmt contribuyente-cdt-consulta.hcl
+vault policy fmt contribuyente-registro-cdt-registro.hcl
 Para escribir la politica
-vault policy write contribuyente-cdt-registro contribuyente-cdt-registro.hcl
-vault policy write contribuyente-cdt-consulta contribuyente-cdt-consulta.hcl
+vault policy write -tls-skip-verify contribuyente-registro-cdt contribuyente-registro-cdt-registro.hcl
 En caso se desee borrar
-vault policy delete contribuyente-cdt-registro
-vault policy delete contribuyente-cdt-consulta
+vault policy delete -tls-skip-verify contribuyente-registro-cdt
 Para leer la politica
-vault policy read contribuyente-cdt-registro
-vault policy read contribuyente-cdt-consulta
+vault policy read -tls-skip-verify contribuyente-registro-cdt
 
 Ejemplo de creacion de un token con una politica asociada
 vault token create -policy=my-policy
 
 Proceso de Autenticacion
 =================================
-Activamos la autenticacion appRole
-vault auth list
-vault auth enable approle
 
-tributariocontribuyentecdt
-tecnologiaseguridadcrypto
+Listamos todos los metodos de autentificacion activados
+vault auth list -tls-skip-verify
+Activamos la autenticacion appRole
+vault auth enable -tls-skip-verify approle 
+
+Listar approle
+curl -X LIST \
+  https://18.224.184.219:8200/v1/auth/approle/role -k \
+  -H 'Authorization: Bearer 4zDnMhsVLWlik6a447MZYYAt' \
+  -H 'Postman-Token: 963b1924-c920-4338-8251-1321bcb056ed' \
+  -H 'cache-control: no-cache' | jq
+
+Crear approle
+curl -X POST \
+  https://18.224.184.219:8200/v1/auth/approle/role/contribuyente-registro-cdt -k \
+  -H 'Authorization: Bearer 4zDnMhsVLWlik6a447MZYYAt' \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 823037d0-88b9-4427-88ac-e3dfea8600f3' \
+  -H 'cache-control: no-cache' \
+  -d '{
+  "token_ttl": "60m",
+  "token_max_ttl": "120m",
+  "policies": [
+    "contribuyente-registro-cdt"
+  ],
+  "period": 0,
+  "bind_secret_id": true
+}' | python -mjson.tool 
+
+Leemos la approle
+curl -X GET \
+  https://18.224.184.219:8200/v1/auth/approle/role/contribuyente-registro-cdt -k \
+  -H 'Authorization: Bearer 4zDnMhsVLWlik6a447MZYYAt' \
+  -H 'Postman-Token: 5dbf7692-30a9-45bb-a2b6-ed59e3aefd43' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Obtenemos Roleid
+curl -X GET \
+  https://18.224.184.219:8200/v1/auth/approle/role/contribuyente-registro-cdt/role-id -k \
+  -H 'Authorization: Bearer 4zDnMhsVLWlik6a447MZYYAt' \
+  -H 'Postman-Token: 9ad87f6c-29b5-4909-8e6f-b744a114671a' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Creamos Secretid
+curl -X POST \
+  https://18.224.184.219:8200/v1/auth/approle/role/contribuyente-registro-cdt/secret-id -k \
+  -H 'Authorization: Bearer 4zDnMhsVLWlik6a447MZYYAt' \
+  -H 'Postman-Token: 94eee43a-8af1-47c6-9490-318b868ecfae' \
+  -H 'cache-control: no-cache' | python -mjson.tool
+
+Login approle
+curl -X POST \
+  https://18.224.184.219:8200/v1/auth/approle/login -k \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 22e259e3-59dc-44de-930d-ef23891a882b' \
+  -H 'cache-control: no-cache' \
+  -d '{
+    "role_id": "951600ab-77cc-86bf-6252-07123c9366e2",
+    "secret_id": "bc102dc4-20e0-7906-b00f-412acc50f902"
+}' | python -mjson.tool
+
+Proceso de Generacion de Clave Privada cdt
+==========================================
+
+Creamos el directorio de la clave privada
+Ubicacion:
+mkdir -p /etc/vault/engine/tributario/kv/contribuyente/registro/cdt/keys/v1
+
+Generamos las claves publicas y privadas
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -pubout -out public.pem
+openssl rsa -in private.pem -outform DER -pubout -out public.key
+openssl pkcs8 -topk8 -nocrypt -in private.pem -outform DER -out private.key
+
+Convertimos la clave privada en base64
+echo -n 'v1' | base64
+base64 private.key
+
+Generacion de numero Aleatorio
+keys]# cat /dev/urandom| tr -dc '0-9' | fold -w 16| head -1
+
+7635902230472781
 
 Proceso de Operaciones x Consola
 =================================
@@ -504,24 +576,25 @@ vault read secret/secreto1
 Para crear un secret
 vault kv put secret/sunat/test foo=world
 
-Proceso de Generacion de Clave Privada cdt
-==========================================
+---------------------------------------------
+ 
+Creamos secret kv
 
-Ubicacion: /etc/vault/engine/tributario/trt/contribuyente/cdt/keys
+curl -X POST \
+  https://18.224.184.219:8200/v1/tributario/kv/contribuyente/registro/cdt/keys/7635902230472781 \
+  -H 'Authorization: Bearer 2XvpADl3meLLlLiUdGhiS8q8' \
+  -H 'Content-Type: application/json' \
+  -H 'Postman-Token: 505c1030-25d9-4c81-a755-054b9abc0bd3' \
+  -H 'cache-control: no-cache' \
+  -d '{
+    "private_key": {
+        "password": {
+            "v1": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC8fCe57PAYEpSeSkRyWuRJq0U57MWqeiQBQHhkRjsm2ux6bfwrz0y1q9OfDdjo7i0GfAS+1tIIUiVC1VCC+MTPUAyqaryAj5dQBcHRA7ugXL7gTDQ/II4oW7/Ir3aCL2AwY7JfDEG28tgCLdHZGIVR/1ECW1JVhosjD9DQIwqEXzwPcb5fLNnDMR3eU0B4CmId0FgTmoIlGQHSes4lfoK6vxrQrlvPf0mEO+RUFx8g5m8nLPFCzqu0R53YcVj5tPIsWxHUPKGcuOx88A9XNtPl/CI81p9SxbbJ267IV3Q4sLr0Df1VMyVkan7ZkCBeH45YyIiCG4fJLToOdit2FaW9AgMBAAECggEAR4psXbKkEs8Cn+4aerkrCxc56FmJUUKY5ey9hXnuu7m+pl2WqF4/hHkakrVjzk2Qw3RRLMpG4Celwu9KZtvbf8CnfguTTsyxpwr4XMgo8B4jyOjDr+5AZuskKR0IQzOOM++zZUY2ryUPfgw8KUWYXN4mtllJL/MoXn+DR2z1cfY5ChgVjoidZOwYgKv00Hp0VbgCnw45rByYXMklm5OTqcVFWMga9DlZk1+KxiUDIBHAixqrDSGDhcAR6sqC90LUZMoxMU7NT1dEePE7cJH+arR7n+PNVL9YnrjHtn1SVEW0L3n6wBPJlsdCUO1/tulO2hGFvQhb9O39lF+rqppMFQKBgQDcDOVPYdVTatqF5ladXdDGN/YJVI+3nD/nQFDzt2PvwFLAc0EzBlcsiCRuvaqGWWgskqen5XBrbIZRQJ96r63QN6+HrPQP8x30B2bdsrgJh+cCbS18sW3MjXKtKj8KsLo+BJfIARewi4dYL9opEDWlI0izmx1HfbbunIi+STgkjwKBgQDbRxvmamYRPku7VSFPlTHkbiY2wZXx2tEXl8G9pdHiEyTeCIcLiLgACaeRr75O5WQiUWMl8Y8wx1UJVv1PoZ7c9zoDyHVCKNfOJhbCX5RHeTt/ajvmQ+PYGgr6pcB5PXPNaakrVb+T5qip6HBriCcggusKLOwwk6WcDeRUElLu8wKBgGi+yrjKvR0EFBkA1+H4slRodvliAzdHbTPK7b3VYgDR75IkSrjbH8vW0mDUb8Ob83akKKJHGQhJlHZA6Kkhzv76Qte2gEbHV0695z1IwUnoIxKIncppOvbPrfK31WJlVYIH9agCvSAQitBzlslNKfv9m7HC+GD7eoSChqTtfYgJAoGBAJw7T++dg1dp0T+J6g/vtvqQWH3O8+y8ARoUMB/VU3MGPNBNtxpKsP6l4lR0qN1Bp1SkNEZGk8UnYLkk15qzBqNdKmKjopgezZO9o52dx+IcyH2BzWfEm0PPWl83VamMVUPXsoaDs9nHEAju6ZpUCbyqSpiXZTk/GVHUvAgCfkBtAoGAdFNrRAlSphgWTcEfandFBXCat/U0XPocJnbdTCODPK5zWXRkRkZ2iOG4mL/8BnVDsXnNegFHmAmQfQMqpQ2oo8hg+kjXSdidnFDxZouxs8XrUJE/RMZG4EFnPgUNaUW/6C9TcufwUB2ghYVDwz+KJ0QGj55c5CmyYkHVy+FpECA="
+        }
+    }
+}'
 
-openssl genrsa -out private.pem 2048
-openssl rsa -in private.pem -outform DER -pubout -out public.key
-openssl pkcs8 -topk8 -nocrypt -in private.pem -outform DER -out private.key
-
-echo -n 'v1' | base64
-base64 private.key
-
-contribuyentecdtpk
-
-
-
-
-
+Creamos secret kv
 
 
 
